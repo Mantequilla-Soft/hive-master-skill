@@ -338,14 +338,15 @@ async function queryContract(
   return result || [];
 }
 
-// Returns true only for transient network/HTTP failures that warrant trying a different node.
-// JSON parse errors, TypeErrors from bad arguments, and logic errors are NOT transient.
+// Returns true only for failures that warrant trying a different node.
+// Covers: HTTP error responses, network-level failures, and non-JSON responses from a node.
+// Logic errors, bad arguments, and non-response errors are NOT transient and will rethrow.
 function isTransientError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   // Our own HTTP status check in queryContract
   if (err.message.startsWith('Hive Engine query failed:')) return true;
   // fetch() network failures (no connection, DNS, timeout, etc.)
-  if (err instanceof TypeError && /failed to fetch|network request failed|load failed/i.test(err.message)) return true;
+  if (err instanceof TypeError && /failed to fetch|fetch failed|network request failed|load failed/i.test(err.message)) return true;
   // Node returned non-JSON (e.g. proxy error page) — bad node, try the next one
   if (err instanceof SyntaxError) return true;
   return false;
