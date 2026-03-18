@@ -28,6 +28,18 @@ const FALLBACK_NODES = [
 const hiveClient = new Client(['https://api.hive.blog']);
 
 // Module-level state — persists for the session, rotates on failure
+// ⚠️ These three variables are not synchronized. This is safe in single-threaded
+// environments (Node.js event loop, React Native JS thread) where concurrent
+// async calls won't interleave mid-rotation. In multi-threaded runtimes (e.g.
+// Node.js worker_threads) concurrent callers can race on nodeIndex/activeContractsUrl,
+// causing duplicate failovers or skipped nodes. If that applies to your deployment,
+// wrap getEngineContractsUrl with a mutex (e.g. the `async-mutex` package):
+//
+//   import { Mutex } from 'async-mutex';
+//   const rotationLock = new Mutex();
+//   async function getEngineContractsUrl(invalidate = false) {
+//     return rotationLock.runExclusive(() => _getEngineContractsUrl(invalidate));
+//   }
 let nodeIndex = 0;
 let activeContractsUrl: string | null = null;
 let flowerengineNodes: string[] = [];
@@ -36,7 +48,14 @@ async function getHiveEngineNodes(): Promise<string[]> {
   const [account] = await hiveClient.database.getAccounts(['flowerengine']);
   if (!account?.json_metadata) throw new Error('Could not fetch flowerengine account');
 
-  const { nodes, failing_nodes = {} } = JSON.parse(account.json_metadata);
+  let parsed: any;
+  try {
+    parsed = JSON.parse(account.json_metadata);
+  } catch (err) {
+    throw new Error(`Failed to parse flowerengine json_metadata: ${err instanceof Error ? err.message : err} (raw: ${String(account.json_metadata).slice(0, 200)})`);
+  }
+
+  const { nodes, failing_nodes = {} } = parsed;
   if (!Array.isArray(nodes) || nodes.length === 0) throw new Error('No nodes in flowerengine metadata');
 
   return nodes.filter((n: string) => !(n in failing_nodes));
@@ -58,7 +77,17 @@ async function getEngineContractsUrl(invalidate = false): Promise<string> {
     nodeIndex++;
     // Exhausted all known nodes — fetch fresh list from flowerengine
     if (nodeIndex >= nodes.length) {
-      flowerengineNodes = await getHiveEngineNodes();
+      try {
+        const freshNodes = await getHiveEngineNodes();
+        // Only replace if we got a non-empty list that differs from what we have
+        if (freshNodes.length > 0) {
+          flowerengineNodes = freshNodes;
+        }
+      } catch (err) {
+        // Log but don't throw — fall back to existing known nodes rather than
+        // crashing the caller because the flowerengine account was unreachable
+        console.warn('Failed to refresh Hive Engine node list from flowerengine:', err);
+      }
       nodeIndex = 0;
       nodes = nodeListWithFallback();
     }
@@ -301,8 +330,26 @@ async function queryContract(
     }),
   });
 
+  if (!response.ok) {
+    throw new Error(`Hive Engine query failed: ${response.status} ${response.statusText}`);
+  }
+
   const { result } = await response.json();
   return result || [];
+}
+
+// Returns true only for failures that warrant trying a different node.
+// Covers: HTTP error responses, network-level failures, and non-JSON responses from a node.
+// Logic errors, bad arguments, and non-response errors are NOT transient and will rethrow.
+function isTransientError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  // Our own HTTP status check in queryContract
+  if (err.message.startsWith('Hive Engine query failed:')) return true;
+  // fetch() network failures (no connection, DNS, timeout, etc.)
+  if (err instanceof TypeError && /failed to fetch|fetch failed|network request failed|load failed/i.test(err.message)) return true;
+  // Node returned non-JSON (e.g. proxy error page) — bad node, try the next one
+  if (err instanceof SyntaxError) return true;
+  return false;
 }
 
 // Wraps queryContract with automatic node caching and rotation on failure.
@@ -317,7 +364,8 @@ async function queryContractWithFailover(
   try {
     const url = await getEngineContractsUrl();
     return await queryContract(contract, table, query, limit, offset, indexes, url);
-  } catch {
+  } catch (err) {
+    if (!isTransientError(err)) throw err; // Don't rotate for logic/parse errors
     // Current node failed — invalidate cache and retry once with next node
     const url = await getEngineContractsUrl(true);
     return await queryContract(contract, table, query, limit, offset, indexes, url);
