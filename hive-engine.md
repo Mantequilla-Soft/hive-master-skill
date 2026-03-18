@@ -6,10 +6,70 @@ Hive Engine is a sidechain for custom tokens, NFTs, and a decentralized exchange
 
 | Service | URL | Purpose |
 |---------|-----|---------|
-| Main RPC | `https://api.hive-engine.com/rpc` | JSON-RPC queries |
-| Alternative | `https://engine.rishipanthee.com/rpc` | Backup RPC |
+| Main | `https://api.hive-engine.com` | Primary node |
+| Alternative | `https://engine.hive.pizza` | Backup node |
 | History | `https://history.hive-engine.com` | Transaction history |
-| Contracts | `https://api.hive-engine.com/rpc/contracts` | Contract queries |
+| Contracts | `https://api.hive-engine.com/contracts` | Contract queries |
+
+### Node Failover Strategy
+
+Try the two well-known nodes first. Only fetch from **FlowerEngine** (the on-chain, community-maintained node list) if both fail. This avoids an extra Hive API call on every request while still recovering gracefully from outages.
+
+The `@flowerengine` account's `json_metadata` contains a `nodes` array of active base URLs and a `failing_nodes` object mapping dead URLs to their failure reasons.
+
+```typescript
+import { Client } from '@hiveio/dhive';
+
+const FALLBACK_NODES = [
+  'https://api.hive-engine.com',
+  'https://engine.hive.pizza',
+];
+
+const hiveClient = new Client(['https://api.hive.blog']);
+
+// Module-level state — persists for the session, rotates on failure
+let nodeIndex = 0;
+let activeContractsUrl: string | null = null;
+let flowerengineNodes: string[] = [];
+
+async function getHiveEngineNodes(): Promise<string[]> {
+  const [account] = await hiveClient.database.getAccounts(['flowerengine']);
+  if (!account?.json_metadata) throw new Error('Could not fetch flowerengine account');
+
+  const { nodes, failing_nodes = {} } = JSON.parse(account.json_metadata);
+  if (!Array.isArray(nodes) || nodes.length === 0) throw new Error('No nodes in flowerengine metadata');
+
+  return nodes.filter((n: string) => !(n in failing_nodes));
+}
+
+function nodeListWithFallback(): string[] {
+  // Hardcoded nodes first, then any flowerengine nodes appended behind them
+  return [...FALLBACK_NODES, ...flowerengineNodes.filter(n => !FALLBACK_NODES.includes(n))];
+}
+
+// Returns cached node immediately. On invalidation, advances index and rotates.
+// If we've exhausted all known nodes, fetches a fresh list from flowerengine.
+async function getEngineContractsUrl(invalidate = false): Promise<string> {
+  if (activeContractsUrl && !invalidate) return activeContractsUrl;
+
+  let nodes = nodeListWithFallback();
+
+  if (invalidate) {
+    nodeIndex++;
+    // Exhausted all known nodes — fetch fresh list from flowerengine
+    if (nodeIndex >= nodes.length) {
+      flowerengineNodes = await getHiveEngineNodes();
+      nodeIndex = 0;
+      nodes = nodeListWithFallback();
+    }
+  }
+
+  activeContractsUrl = `${nodes[nodeIndex]}/contracts`;
+  return activeContractsUrl;
+}
+```
+
+No ping on startup — the first real query drives failover. If it fails, pass `invalidate=true` to advance to the next node. Only hits flowerengine once all known nodes are exhausted.
 
 ## Querying Token Data
 
@@ -17,24 +77,8 @@ Hive Engine is a sidechain for custom tokens, NFTs, and a decentralized exchange
 
 ```typescript
 async function getTokenBalances(account: string) {
-  const response = await fetch('https://api.hive-engine.com/rpc/contracts', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'find',
-      params: {
-        contract: 'tokens',
-        table: 'balances',
-        query: { account },
-        limit: 1000,
-      },
-    }),
-  });
-
-  const { result } = await response.json();
-  return result; // [{ account, symbol, balance, stake, ... }]
+  return queryContractWithFailover('tokens', 'balances', { account }, 1000);
+  // Returns [{ account, symbol, balance, stake, ... }]
 }
 ```
 
@@ -42,23 +86,8 @@ async function getTokenBalances(account: string) {
 
 ```typescript
 async function getTokenInfo(symbol: string) {
-  const response = await fetch('https://api.hive-engine.com/rpc/contracts', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'findOne',
-      params: {
-        contract: 'tokens',
-        table: 'tokens',
-        query: { symbol },
-      },
-    }),
-  });
-
-  const { result } = await response.json();
-  return result; // { symbol, name, precision, maxSupply, supply, ... }
+  const results = await queryContractWithFailover('tokens', 'tokens', { symbol }, 1);
+  return results[0] ?? null; // { symbol, name, precision, maxSupply, supply, ... }
 }
 ```
 
@@ -67,8 +96,8 @@ async function getTokenInfo(symbol: string) {
 ```typescript
 async function getOrderBook(symbol: string, limit = 50) {
   const [buyOrders, sellOrders] = await Promise.all([
-    queryContract('market', 'buyBook', { symbol }, limit, 0, [{ index: 'priceDec', descending: true }]),
-    queryContract('market', 'sellBook', { symbol }, limit, 0, [{ index: 'priceDec', descending: false }]),
+    queryContractWithFailover('market', 'buyBook', { symbol }, limit, 0, [{ index: 'priceDec', descending: true }]),
+    queryContractWithFailover('market', 'sellBook', { symbol }, limit, 0, [{ index: 'priceDec', descending: false }]),
   ]);
 
   return { buy: buyOrders, sell: sellOrders };
@@ -79,7 +108,7 @@ async function getOrderBook(symbol: string, limit = 50) {
 
 ```typescript
 async function getTradeHistory(symbol: string, limit = 50) {
-  return queryContract('market', 'tradesHistory', { symbol }, limit, 0, [
+  return queryContractWithFailover('market', 'tradesHistory', { symbol }, limit, 0, [
     { index: '_id', descending: true }
   ]);
 }
@@ -93,8 +122,8 @@ async function getOpenOrders(account: string, symbol?: string) {
   if (symbol) query.symbol = symbol;
 
   const [buyOrders, sellOrders] = await Promise.all([
-    queryContract('market', 'buyBook', query, 100),
-    queryContract('market', 'sellBook', query, 100),
+    queryContractWithFailover('market', 'buyBook', query, 100),
+    queryContractWithFailover('market', 'sellBook', query, 100),
   ]);
 
   return { buy: buyOrders, sell: sellOrders };
@@ -204,16 +233,14 @@ await broadcastHiveEngineOp(username, 'market', 'cancel', {
 
 ```typescript
 // Get NFT instances owned by account
+// Each NFT collection has its own table: ${symbol}instances
 async function getNFTs(account: string, symbol: string) {
-  return queryContract('nft', 'instances', {
-    account,
-    'properties.symbol': symbol,
-  }, 1000);
+  return queryContractWithFailover('nft', `${symbol}instances`, { account }, 1000);
 }
 
 // Get NFT definition
 async function getNFTDefinition(symbol: string) {
-  return queryContract('nft', 'nfts', { symbol });
+  return queryContractWithFailover('nft', 'nfts', { symbol }, 1);
 }
 ```
 
@@ -230,7 +257,7 @@ await broadcastHiveEngineOp(username, 'nft', 'transfer', {
 
 ```typescript
 // Get pool info
-const pools = await queryContract('marketpools', 'pools', {}, 1000);
+const pools = await queryContractWithFailover('marketpools', 'pools', {}, 1000);
 
 // Add liquidity
 await broadcastHiveEngineOp(username, 'marketpools', 'addLiquidity', {
@@ -251,6 +278,8 @@ await broadcastHiveEngineOp(username, 'marketpools', 'swapTokens', {
 
 ## Helper: Generic Contract Query
 
+Use `queryContractWithFailover` for all queries. It handles node caching, rotation on failure, and flowerengine fallback automatically. The lower-level `queryContract` is available if you need to pass a specific URL directly.
+
 ```typescript
 async function queryContract(
   contract: string,
@@ -258,9 +287,10 @@ async function queryContract(
   query: any,
   limit = 1000,
   offset = 0,
-  indexes?: Array<{ index: string; descending: boolean }>
+  indexes?: Array<{ index: string; descending: boolean }>,
+  contractsUrl = 'https://api.hive-engine.com/contracts'
 ) {
-  const response = await fetch('https://api.hive-engine.com/rpc/contracts', {
+  const response = await fetch(contractsUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -273,5 +303,24 @@ async function queryContract(
 
   const { result } = await response.json();
   return result || [];
+}
+
+// Wraps queryContract with automatic node caching and rotation on failure.
+async function queryContractWithFailover(
+  contract: string,
+  table: string,
+  query: any,
+  limit = 1000,
+  offset = 0,
+  indexes?: Array<{ index: string; descending: boolean }>
+) {
+  try {
+    const url = await getEngineContractsUrl();
+    return await queryContract(contract, table, query, limit, offset, indexes, url);
+  } catch {
+    // Current node failed — invalidate cache and retry once with next node
+    const url = await getEngineContractsUrl(true);
+    return await queryContract(contract, table, query, limit, offset, indexes, url);
+  }
 }
 ```
