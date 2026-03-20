@@ -17,6 +17,7 @@ A comprehensive [Claude Code](https://claude.ai/claude-code) skill that gives Cl
 | `streaming-and-realtime.md` | Block streaming, polling patterns, notifications, WebSocket pitfalls, push notification architecture |
 | `hive-engine.md` | Layer 2 tokens, balances, order book, staking, NFTs, diesel pools |
 | `image-uploads.md` | Image upload to images.hive.blog — signing challenge, Keychain flow, HEIC conversion, 3Speak fallback, CORS proxy |
+| `payments.md` | HBD/HIVE payments — Keychain requestTransfer, QR code URI format (hive://sign/op/), qrcodejs, payment polling |
 | `battle-tested.md` | 18 hard-won lessons — dhive failover fix, broadcast retry dangers, beneficiary sorting, iOS quirks, and more |
 | `react-native.md` | React Native / Expo patterns — SecureStore, image handling, networking, optimistic updates |
 | `examples/dhive-patterns.md` | Complete code: publish posts, vote with value estimation, paginated feeds, account info |
