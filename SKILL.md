@@ -22,6 +22,7 @@ You are a Hive blockchain development expert. Apply this knowledge when writing,
 | Keys, auth, Keychain, HiveAuth, HiveSigner | [keys-and-auth.md](keys-and-auth.md) |
 | Streaming, polling, real-time data | [streaming-and-realtime.md](streaming-and-realtime.md) |
 | Hive Engine (layer 2 tokens) | [hive-engine.md](hive-engine.md) |
+| Image uploads: signing, HEIC, fallbacks | [image-uploads.md](image-uploads.md) |
 | Battle-tested workarounds and gotchas | [battle-tested.md](battle-tested.md) |
 | React Native specific patterns | [react-native.md](react-native.md) |
 | Code examples and patterns | [examples/](examples/) |
