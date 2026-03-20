@@ -31,8 +31,10 @@ async function uploadToHiveBlog(file, username) {
   challenge.set(prefix, 0);
   challenge.set(fileBytes, prefix.length);
 
-  // 3. Keychain expects the challenge as JSON stringified array
-  const challengeString = JSON.stringify(Array.from(challenge));
+  // 3. Keychain expects JSON stringified Buffer format: {"type":"Buffer","data":[...]}
+  //    This is how Node's Buffer serializes — Keychain reconstructs the binary from this.
+  //    Using a plain array [1,2,3,...] will NOT work (different hash = invalid signature).
+  const challengeString = JSON.stringify({ type: 'Buffer', data: Array.from(challenge) });
 
   // 4. Sign with posting key via Keychain
   const signature = await new Promise((resolve, reject) => {
@@ -217,8 +219,8 @@ async function normalizeImage(uri, mimeType) {
 ### 1. Challenge format is NOT just the username
 The signing challenge is `'ImageSigningChallenge' + fileContent` (raw bytes), NOT the username or a simple string. Getting this wrong produces a valid signature that the server rejects.
 
-### 2. Keychain expects JSON stringified buffer
-When using `requestSignBuffer`, pass `JSON.stringify(Array.from(challengeBuffer))`. Keychain hashes this internally before signing.
+### 2. Keychain expects JSON stringified Buffer object — NOT a plain array
+When using `requestSignBuffer`, pass `JSON.stringify({ type: 'Buffer', data: Array.from(challengeBuffer) })`. This matches Node.js `JSON.stringify(Buffer)` output. Keychain detects this format and reconstructs the binary before hashing. If you pass `JSON.stringify(Array.from(...))` (a plain `[1,2,3,...]` array), Keychain hashes the literal string, producing a completely different signature → 400 from the server.
 
 ### 3. Field name differs between services
 - **images.hive.blog:** field name is `file`
