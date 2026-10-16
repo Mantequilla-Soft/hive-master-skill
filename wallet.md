@@ -152,6 +152,25 @@ await client.broadcast.sendOperations([
 ], activeKey);
 ```
 
+### Pending HBD savings interest
+
+Interest is not stored; compute it client-side from the account fields:
+
+```typescript
+const rateBps = dgp.hbd_interest_rate;                // basis points, 1000 = 10% APR
+const balance = parseFloat(acc.savings_hbd_balance);  // whole HBD
+// savings_hbd_seconds is in CHAIN units (0.001 HBD x seconds) -> divide by 1000
+const accumulated = parseInt(acc.savings_hbd_seconds) / 1000;
+const elapsed = (Date.now() - new Date(acc.savings_hbd_seconds_last_update + 'Z').getTime()) / 1000;
+const pending = (accumulated + balance * elapsed) * (rateBps / 10000) / SECONDS_PER_YEAR;
+```
+
+Gotchas:
+- **Unit mismatch bug**: adding `savings_hbd_seconds` to `balance * elapsed` without the `/1000` overstates interest 1000x (seen in Snapie: 687 HBD pending on 365 HBD saved).
+- Interest is paid on the next savings op (deposit/withdraw), and only if 30+ days since `savings_hbd_last_interest_payment`. Wallets "claim" by sending a tiny `transfer_to_savings` (e.g. 0.001 HBD from liquid balance) to the own account, so liquid HBD >= 0.001 is required.
+- Chain constant for a year is 365 days (31,536,000 s); 365.25 gives a ~0.07% drift.
+- Verify against Ecency/other wallets when in doubt (not yet cross-checked against their source).
+
 ## HBD Conversion
 
 ```typescript
