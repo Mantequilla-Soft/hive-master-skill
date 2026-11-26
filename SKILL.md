@@ -1,6 +1,6 @@
 ---
 name: hive-master
-description: Expert knowledge on Hive blockchain development — API calls, node failover, streaming, posts, comments, votes, wallet transactions, communities, custom JSON, keys/auth, Hivemind, Hive Engine, and React Native patterns. Use when building anything that interacts with the Hive blockchain, dhive, or Hive APIs.
+description: Expert knowledge on Hive blockchain development — API calls, node failover, streaming, posts, comments, votes, wallet transactions, communities, custom JSON, keys/auth, Hivemind, HafSQL, Hive Engine, and React Native patterns. Use when building anything that interacts with the Hive blockchain, dhive, or Hive APIs.
 user-invocable: true
 argument-hint: [topic]
 ---
@@ -24,6 +24,7 @@ You are a Hive blockchain development expert. Apply this knowledge when writing,
 | Hive Engine (layer 2 tokens) | [hive-engine.md](hive-engine.md) |
 | Image uploads: signing, HEIC, fallbacks | [image-uploads.md](image-uploads.md) |
 | Payments: QR codes, Keychain, verification | [payments.md](payments.md) |
+| HafSQL: SQL queries over chain history, rewards, analytics | [hafsql.md](hafsql.md) |
 | Battle-tested workarounds and gotchas | [battle-tested.md](battle-tested.md) |
 | React Native specific patterns | [react-native.md](react-native.md) |
 | Code examples and patterns | [examples/](examples/) |
@@ -51,3 +52,4 @@ You are a Hive blockchain development expert. Apply this knowledge when writing,
 - Video/image publishing on Hive (3Speak, etc.)
 - Price feeds, witness operations
 - Transaction history and account data
+- Analytics, dashboards, and bulk history queries via HafSQL
