@@ -137,7 +137,8 @@ const history = await client.call('condenser_api', 'get_account_history', [
 | HiveSigner | `https://hivesigner.com` | OAuth-based auth |
 | Ecency API | `https://ecency.com/api` | Ecency services |
 | 3Speak | `https://studio.3speak.tv` | Video hosting |
-| HafSQL | `hafbe.openhive.network` | SQL-accessible chain data |
+| HafSQL | `hafsql-sql.mahdiyari.info:5432` (PostgreSQL) | SQL-accessible chain data — see [hafsql.md](hafsql.md) |
+| HAF Block Explorer | `https://hafbe.openhive.network` | HAF-based block explorer UI/API |
 
 ## Image Upload (Hive Images)
 
